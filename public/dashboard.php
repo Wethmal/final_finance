@@ -1,8 +1,7 @@
 <?php
-// dashboard.php - Protected user dashboard with budget planner
+// dashboard.php - Modern Dashboard with Real Charts
 session_start();
 
-// Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header('Location: login.php');
     exit();
@@ -12,7 +11,6 @@ $username = $_SESSION['username'];
 $email = $_SESSION['email'];
 $user_id = $_SESSION['user_id'];
 
-// Database setup using PDO
 try {
     $db = new PDO('sqlite:' .__DIR__ . '/../db/database.db');
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -20,124 +18,17 @@ try {
     die("Connection failed: " . $e->getMessage());
 }
 
-// Check if user_id column exists in budgets table, if not add it
-try {
-    $result = $db->query("PRAGMA table_info(budgets)");
-    $columns = $result->fetchAll(PDO::FETCH_ASSOC);
-    $hasUserId = false;
-    
-    foreach ($columns as $column) {
-        if ($column['name'] === 'user_id') {
-            $hasUserId = true;
-            break;
-        }
-    }
-    
-    // If user_id column doesn't exist, add it
-    if (!$hasUserId && count($columns) > 0) {
-        $db->exec('ALTER TABLE budgets ADD COLUMN user_id INTEGER DEFAULT 1');
-        $stmt = $db->prepare('UPDATE budgets SET user_id = :uid WHERE user_id IS NULL OR user_id = 1');
-        $stmt->execute([':uid' => $user_id]);
-    }
-} catch(PDOException $e) {
-    // Table might not exist yet, that's okay
-}
-
-// Create tables if not exist
-$db->exec('CREATE TABLE IF NOT EXISTS budgets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    budget_amount REAL NOT NULL,
-    created_date TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-)');
-
-$db->exec('CREATE TABLE IF NOT EXISTS expenses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    budget_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    description TEXT,
-    date TEXT NOT NULL,
-    FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE
-)');
-
-// Handle CRUD operations
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action'])) {
-        switch ($_POST['action']) {
-            case 'create_budget':
-                $stmt = $db->prepare('INSERT INTO budgets (user_id, name, category, budget_amount, created_date) VALUES (:uid, :name, :cat, :amt, :date)');
-                $stmt->execute([
-                    ':uid' => $user_id,
-                    ':name' => $_POST['name'],
-                    ':cat' => $_POST['category'],
-                    ':amt' => $_POST['budget_amount'],
-                    ':date' => date('Y-m-d')
-                ]);
-                break;
-            
-            case 'add_expense':
-                $stmt = $db->prepare('INSERT INTO expenses (budget_id, amount, description, date) VALUES (:bid, :amt, :desc, :date)');
-                $stmt->execute([
-                    ':bid' => $_POST['budget_id'],
-                    ':amt' => $_POST['amount'],
-                    ':desc' => $_POST['description'],
-                    ':date' => $_POST['date']
-                ]);
-                break;
-            
-            case 'update_budget':
-                $stmt = $db->prepare('UPDATE budgets SET name=:name, category=:cat, budget_amount=:amt WHERE id=:id AND user_id=:uid');
-                $stmt->execute([
-                    ':name' => $_POST['name'],
-                    ':cat' => $_POST['category'],
-                    ':amt' => $_POST['budget_amount'],
-                    ':id' => $_POST['id'],
-                    ':uid' => $user_id
-                ]);
-                break;
-            
-            case 'delete_budget':
-                $stmt = $db->prepare('DELETE FROM budgets WHERE id=:id AND user_id=:uid');
-                $stmt->execute([':id' => $_POST['id'], ':uid' => $user_id]);
-                break;
-            
-            case 'delete_expense':
-                $stmt = $db->prepare('DELETE FROM expenses WHERE id=:id AND budget_id IN (SELECT id FROM budgets WHERE user_id=:uid)');
-                $stmt->execute([':id' => $_POST['id'], ':uid' => $user_id]);
-                break;
-            
-            case 'update_expense':
-                $stmt = $db->prepare('UPDATE expenses SET amount=:amt, description=:desc, date=:date WHERE id=:id AND budget_id IN (SELECT id FROM budgets WHERE user_id=:uid)');
-                $stmt->execute([
-                    ':amt' => $_POST['amount'],
-                    ':desc' => $_POST['description'],
-                    ':date' => $_POST['date'],
-                    ':id' => $_POST['id'],
-                    ':uid' => $user_id
-                ]);
-                break;
-        }
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit;
-    }
-}
-
-// Get all budgets with spent amounts for current user
+// Get total budget stats
 $stmt = $db->prepare('
     SELECT b.*, COALESCE(SUM(e.amount), 0) as spent
     FROM budgets b
     LEFT JOIN expenses e ON b.id = e.budget_id
     WHERE b.user_id = :uid
     GROUP BY b.id
-    ORDER BY b.created_date DESC
 ');
 $stmt->execute([':uid' => $user_id]);
 $budgets = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Calculate total budget stats
 $totalBudget = 0;
 $totalSpent = 0;
 foreach ($budgets as $budget) {
@@ -145,495 +36,581 @@ foreach ($budgets as $budget) {
     $totalSpent += $budget['spent'];
 }
 $totalRemaining = $totalBudget - $totalSpent;
+$usagePercentage = $totalBudget > 0 ? round(($totalSpent / $totalBudget) * 100) : 0;
 
-// Get budget for editing
-$editBudget = null;
-if (isset($_GET['edit'])) {
-    $stmt = $db->prepare('SELECT * FROM budgets WHERE id=:id AND user_id=:uid');
-    $stmt->execute([':id' => $_GET['edit'], ':uid' => $user_id]);
-    $editBudget = $stmt->fetch(PDO::FETCH_ASSOC);
-}
+// Get recent expenses
+$stmt = $db->prepare('
+    SELECT e.*, b.category, b.name as budget_name
+    FROM expenses e
+    JOIN budgets b ON e.budget_id = b.id
+    WHERE b.user_id = :uid
+    ORDER BY e.date DESC
+    LIMIT 5
+');
+$stmt->execute([':uid' => $user_id]);
+$recentExpenses = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get expenses for a specific budget
-$viewExpenses = null;
-$currentBudget = null;
-$editExpense = null;
-if (isset($_GET['view'])) {
-    $stmt = $db->prepare('SELECT * FROM expenses WHERE budget_id=:id AND budget_id IN (SELECT id FROM budgets WHERE user_id=:uid) ORDER BY date DESC');
-    $stmt->execute([':id' => $_GET['view'], ':uid' => $user_id]);
-    $viewExpenses = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    $stmt = $db->prepare('SELECT * FROM budgets WHERE id=:id AND user_id=:uid');
-    $stmt->execute([':id' => $_GET['view'], ':uid' => $user_id]);
-    $currentBudget = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    // Get expense for editing
-    if (isset($_GET['edit_expense'])) {
-        $stmt = $db->prepare('SELECT * FROM expenses WHERE id=:id AND budget_id IN (SELECT id FROM budgets WHERE user_id=:uid)');
-        $stmt->execute([':id' => $_GET['edit_expense'], ':uid' => $user_id]);
-        $editExpense = $stmt->fetch(PDO::FETCH_ASSOC);
-    }
-}
+// Get spending by category
+$stmt = $db->prepare('
+    SELECT b.category, SUM(e.amount) as total, b.budget_amount
+    FROM budgets b
+    LEFT JOIN expenses e ON b.id = e.budget_id
+    WHERE b.user_id = :uid
+    GROUP BY b.category
+    ORDER BY total DESC
+');
+$stmt->execute([':uid' => $user_id]);
+$categorySpending = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get monthly spending trend (last 6 months)
+$stmt = $db->prepare("
+    SELECT strftime('%Y-%m', e.date) as month, SUM(e.amount) as total
+    FROM expenses e
+    JOIN budgets b ON e.budget_id = b.id
+    WHERE b.user_id = :uid
+    AND e.date >= date('now', '-6 months')
+    GROUP BY month
+    ORDER BY month
+");
+$stmt->execute([':uid' => $user_id]);
+$monthlyTrend = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get daily spending for current month
+$stmt = $db->prepare("
+    SELECT DATE(e.date) as day, SUM(e.amount) as total
+    FROM expenses e
+    JOIN budgets b ON e.budget_id = b.id
+    WHERE b.user_id = :uid
+    AND strftime('%Y-%m', e.date) = strftime('%Y-%m', 'now')
+    GROUP BY day
+    ORDER BY day
+");
+$stmt->execute([':uid' => $user_id]);
+$dailySpending = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Budget Planner - Dashboard</title>
+    <title>Dashboard - Statok</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, sans-serif; 
+            background: #f8f9fc; 
+            display: flex;
+            min-height: 100vh;
+        }
         
-        .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            padding: 20px 40px; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1); 
-            color: white;
+        .sidebar {
+            width: 260px;
+            background: white;
+            border-right: 1px solid #e8eaf0;
+            padding: 24px 0;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
         }
-        .header-content {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .header-left { display: flex; align-items: center; gap: 20px; }
-        .header h1 { font-size: 28px; display: flex; align-items: center; gap: 12px; }
-        .icon { font-size: 32px; }
-        .user-info-header {
+        
+        .logo {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
+            padding: 0 24px;
+            margin-bottom: 32px;
         }
-        .user-avatar {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.2);
+        
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
-            font-weight: 600;
+            font-size: 18px;
         }
-        .user-details {
-            text-align: right;
-        }
-        .user-name { font-weight: 600; font-size: 16px; }
-        .user-email { font-size: 13px; opacity: 0.9; }
         
-        .logout-btn {
-            background: white;
-            color: #667eea;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 8px;
+        .logo-text {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a202c;
+        }
+        
+        .nav-menu {
+            list-style: none;
+            padding: 0 12px;
+        }
+        
+        .nav-item {
+            margin-bottom: 4px;
+        }
+        
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            color: #64748b;
             text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.2s;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .nav-link:hover {
+            background: #f8f9fc;
+            color: #667eea;
+        }
+        
+        .nav-link.active {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            color: #667eea;
+        }
+        
+        .nav-icon {
+            width: 20px;
+            font-size: 18px;
+        }
+        
+        .main-content {
+            margin-left: 260px;
+            flex: 1;
+            padding: 24px 32px;
+        }
+        
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+        
+        .welcome-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a202c;
+        }
+        
+        .welcome-subtitle {
+            font-size: 14px;
+            color: #64748b;
+            margin-top: 4px;
+        }
+        
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s;
         }
-        .logout-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(255,255,255,0.3); }
-        
-        .container { max-width: 1400px; margin: 0 auto; padding: 40px; }
         
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 24px;
-            margin-bottom: 40px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 24px;
         }
         
         .stat-card {
             background: white;
-            padding: 28px;
+            padding: 24px;
             border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            transition: transform 0.2s;
+            border: 1px solid #e8eaf0;
         }
-        .stat-card:hover { transform: translateY(-4px); }
         
-        .stat-icon {
-            width: 60px;
-            height: 60px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 28px;
+        .stat-label {
+            font-size: 13px;
+            color: #64748b;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .stat-icon.total { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        .stat-icon.spent { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
-        .stat-icon.remaining { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
-        .stat-icon.count { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
         
-        .stat-content { flex: 1; }
-        .stat-label { font-size: 14px; color: #90a4ae; margin-bottom: 8px; font-weight: 600; }
-        .stat-value { font-size: 28px; font-weight: 700; color: #2c3e50; }
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-top: 8px;
+        }
         
-        .section-header {
+        .stat-change {
+            font-size: 13px;
+            margin-top: 8px;
+            color: #10b981;
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 24px;
+        }
+        
+        .widget {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid #e8eaf0;
+        }
+        
+        .widget-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
-        .section-title { font-size: 24px; font-weight: 600; color: #2c3e50; }
         
-        .btn-create { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            color: white; 
-            border: none; 
-            padding: 14px 28px; 
-            border-radius: 12px; 
-            cursor: pointer; 
-            font-size: 16px; 
-            font-weight: 600; 
-            display: flex; 
-            align-items: center; 
-            gap: 8px; 
-            transition: transform 0.2s; 
+        .widget-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1a202c;
         }
-        .btn-create:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4); }
         
-        .budget-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 24px; }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
         
-        .budget-card { background: white; border-radius: 16px; padding: 28px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); transition: transform 0.2s; }
-        .budget-card:hover { transform: translateY(-4px); box-shadow: 0 8px 30px rgba(0,0,0,0.12); }
+        .col-8 { grid-column: span 8; }
+        .col-4 { grid-column: span 4; }
+        .col-6 { grid-column: span 6; }
         
-        .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
-        .card-title { font-size: 20px; font-weight: 600; color: #2c3e50; margin-bottom: 8px; }
+        .payment-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
         
-        .category-badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; }
-        .cat-food { background: #ffe5f1; color: #e91e63; }
-        .cat-transport { background: #e3f2fd; color: #2196f3; }
-        .cat-shopping { background: #f3e5f5; color: #9c27b0; }
-        .cat-bills { background: #fff3e0; color: #ff9800; }
-        .cat-entertainment { background: #e0f2f1; color: #009688; }
-        .cat-healthcare { background: #ffebee; color: #f44336; }
-        .cat-education { background: #e8f5e9; color: #4caf50; }
-        .cat-other { background: #f5f5f5; color: #757575; }
+        .payment-item:last-child {
+            border-bottom: none;
+        }
         
-        .action-btns { display: flex; gap: 8px; }
-        .btn-icon { width: 40px; height: 40px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; transition: all 0.2s; }
-        .btn-edit { background: #4fc3f7; color: white; }
-        .btn-delete { background: #ff4081; color: white; }
-        .btn-view { background: #ab47bc; color: white; }
-        .btn-icon:hover { transform: scale(1.1); }
+        .payment-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
         
-        .budget-amounts { display: flex; justify-content: space-between; margin-bottom: 16px; font-size: 15px; color: #546e7a; }
-        .amount-value { font-weight: 700; color: #2c3e50; }
+        .payment-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a202c;
+        }
         
-        .progress-bar { height: 12px; background: #eceff1; border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
-        .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); transition: width 0.3s; border-radius: 10px; }
-        .progress-over { background: linear-gradient(90deg, #f44336 0%, #e91e63 100%); }
+        .payment-date {
+            font-size: 12px;
+            color: #94a3b8;
+        }
         
-        .budget-status { display: flex; align-items: center; justify-content: space-between; }
-        .remaining { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; }
-        .remaining.positive { color: #4caf50; }
-        .remaining.warning { color: #ff9800; }
-        .remaining.over { color: #f44336; }
-        .usage { color: #90a4ae; font-size: 14px; }
+        .payment-amount {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1a202c;
+        }
         
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
-        .modal.active { display: flex; }
-        .modal-content { background: white; padding: 32px; border-radius: 16px; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto; }
-        .modal-content.large { max-width: 900px; }
-        .modal-header { font-size: 24px; font-weight: 600; margin-bottom: 24px; color: #2c3e50; }
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #94a3b8;
+        }
         
-        .form-group { margin-bottom: 20px; }
-        label { display: block; margin-bottom: 8px; color: #546e7a; font-weight: 600; font-size: 14px; }
-        input, select, textarea { width: 100%; padding: 12px; border: 2px solid #eceff1; border-radius: 8px; font-size: 14px; transition: border 0.2s; }
-        input:focus, select:focus, textarea:focus { outline: none; border-color: #667eea; }
-        textarea { resize: vertical; min-height: 80px; }
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
         
-        .form-actions { display: flex; gap: 12px; margin-top: 24px; }
-        .btn { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
-        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-        .btn-secondary { background: #eceff1; color: #546e7a; }
-        .btn:hover { transform: translateY(-1px); }
+        @media (max-width: 1200px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .col-8, .col-6, .col-4 { grid-column: span 12; }
+        }
         
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th { background: #f8f9fa; padding: 12px; text-align: left; font-weight: 600; color: #546e7a; border-bottom: 2px solid #eceff1; }
-        td { padding: 12px; border-bottom: 1px solid #eceff1; }
-        tr:hover { background: #f8f9fa; }
-        
-        .empty-state { text-align: center; padding: 60px 20px; color: #b0bec5; }
-        .empty-state-icon { font-size: 64px; margin-bottom: 16px; }
-        .empty-state h2 { color: #546e7a; margin-bottom: 8px; }
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="header-content">
-            <div class="header-left">
-                <h1><span class="icon">💰</span> Budget Planner</h1>
-            </div>
-            <div class="user-info-header">
-                <div class="user-avatar"><?php echo strtoupper(substr($username, 0, 1)); ?></div>
-                <div class="user-details">
-                    <div class="user-name"><?php echo htmlspecialchars($username); ?></div>
-                    <div class="user-email"><?php echo htmlspecialchars($email); ?></div>
-                </div>
-                <a href="logout.php" class="logout-btn">Logout</a>
-            </div>
+    <aside class="sidebar">
+        <div class="logo">
+            <div class="logo-icon">💰</div>
+            <div class="logo-text">Statok</div>
         </div>
-    </div>
+        
+        <ul class="nav-menu">
+            <li class="nav-item">
+                <a href="dashboard.php" class="nav-link active">
+                    <span class="nav-icon">📊</span>
+                    Dashboard
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="budgets.php" class="nav-link">
+                    <span class="nav-icon">💰</span>
+                    Budgets
+                </a>
+            </li>
 
-    <div class="container">
-        <!-- Stats Overview -->
+            <li class="nav-item">
+                <a href="savings.php" class="nav-link">
+                    <span class="nav-icon">🎯</span>
+                    Savings Goals
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#" class="nav-link">
+                    <span class="nav-icon">📈</span>
+                    Analytics
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="#" class="nav-link">
+                    <span class="nav-icon">⚙️</span>
+                    Settings
+                </a>
+            </li>
+            <li class="nav-item">
+                <a href="logout.php" class="nav-link">
+                    <span class="nav-icon">🚪</span>
+                    Logout
+                </a>
+            </li>
+        </ul>
+    </aside>
+
+    <main class="main-content">
+        <div class="top-bar">
+            <div>
+                <div class="welcome-title">Welcome back, <?php echo htmlspecialchars($username); ?>! 👋</div>
+                <div class="welcome-subtitle">Here's your financial overview</div>
+            </div>
+            
+            <div class="top-actions">
+                <div class="user-avatar" title="<?php echo htmlspecialchars($email); ?>">
+                    <?php echo strtoupper(substr($username, 0, 1)); ?>
+                </div>
+            </div>
+
+            <form action="sync.php" method="POST">
+    <button type="submit">🔄 Sync to Oracle</button>
+</form>
+
+        </div>
+
+        <!-- Stats Cards -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-icon total">💼</div>
-                <div class="stat-content">
-                    <div class="stat-label">Total Budget</div>
-                    <div class="stat-value">$<?php echo number_format($totalBudget, 2); ?></div>
+                <div class="stat-label">Total Budget</div>
+                <div class="stat-value">$<?php echo number_format($totalBudget, 2); ?></div>
+                <div class="stat-change">↗ Monthly budget</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">Total Spent</div>
+                <div class="stat-value">$<?php echo number_format($totalSpent, 2); ?></div>
+                <div class="stat-change"><?php echo $usagePercentage; ?>% of budget</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">Remaining</div>
+                <div class="stat-value">$<?php echo number_format($totalRemaining, 2); ?></div>
+                <div class="stat-change" style="color: <?php echo $totalRemaining >= 0 ? '#10b981' : '#ef4444'; ?>">
+                    <?php echo $totalRemaining >= 0 ? 'Under budget' : 'Over budget'; ?>
                 </div>
             </div>
             
             <div class="stat-card">
-                <div class="stat-icon spent">💸</div>
-                <div class="stat-content">
-                    <div class="stat-label">Total Spent</div>
-                    <div class="stat-value">$<?php echo number_format($totalSpent, 2); ?></div>
-                </div>
-            </div>
-            
-            <div class="stat-card">
-                <div class="stat-icon remaining">💵</div>
-                <div class="stat-content">
-                    <div class="stat-label">Remaining</div>
-                    <div class="stat-value" style="color: <?php echo $totalRemaining >= 0 ? '#4caf50' : '#f44336'; ?>">
-                        $<?php echo number_format(abs($totalRemaining), 2); ?>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="stat-card">
-                <div class="stat-icon count">📊</div>
-                <div class="stat-content">
-                    <div class="stat-label">Active Budgets</div>
-                    <div class="stat-value"><?php echo count($budgets); ?></div>
-                </div>
+                <div class="stat-label">Active Budgets</div>
+                <div class="stat-value"><?php echo count($budgets); ?></div>
+                <div class="stat-change">Budget categories</div>
             </div>
         </div>
 
-        <!-- Budget List Section -->
-        <div class="section-header">
-            <h2 class="section-title">Your Budgets</h2>
-            <button class="btn-create" onclick="openModal('createBudget')">
-                <span style="font-size: 20px;">+</span> Create Budget
-            </button>
-        </div>
-
-        <?php if (count($budgets) > 0): ?>
-        <div class="budget-grid">
-            <?php foreach ($budgets as $budget):
-                $remaining = $budget['budget_amount'] - $budget['spent'];
-                $percentage = $budget['budget_amount'] > 0 ? ($budget['spent'] / $budget['budget_amount']) * 100 : 0;
-                $statusClass = $percentage >= 100 ? 'over' : ($percentage >= 80 ? 'warning' : 'positive');
-                $catClass = 'cat-' . strtolower(str_replace(['&', ' '], '', explode(' ', $budget['category'])[0]));
-            ?>
-            <div class="budget-card">
-                <div class="card-header">
-                    <div>
-                        <div class="card-title"><?php echo htmlspecialchars($budget['name']); ?></div>
-                        <span class="category-badge <?php echo $catClass; ?>"><?php echo htmlspecialchars($budget['category']); ?></span>
-                    </div>
-                    <div class="action-btns">
-                        <button class="btn-icon btn-view" onclick="window.location.href='?view=<?php echo $budget['id']; ?>'" title="View Expenses">👁️</button>
-                        <button class="btn-icon btn-edit" onclick="window.location.href='?edit=<?php echo $budget['id']; ?>'" title="Edit">✏️</button>
-                        <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this budget and all expenses?');">
-                            <input type="hidden" name="action" value="delete_budget">
-                            <input type="hidden" name="id" value="<?php echo $budget['id']; ?>">
-                            <button type="submit" class="btn-icon btn-delete" title="Delete">🗑️</button>
-                        </form>
-                    </div>
+        <!-- Charts Grid -->
+        <div class="dashboard-grid">
+            <!-- Spending Trend Chart -->
+            <div class="widget col-8">
+                <div class="widget-header">
+                    <div class="widget-title">Spending Trend (Last 6 Months)</div>
                 </div>
-                
-                <div class="budget-amounts">
-                    <span>Spent: <span class="amount-value">$<?php echo number_format($budget['spent'], 2); ?></span></span>
-                    <span>Budget: <span class="amount-value">$<?php echo number_format($budget['budget_amount'], 2); ?></span></span>
-                </div>
-                
-                <div class="progress-bar">
-                    <div class="progress-fill <?php echo $percentage >= 100 ? 'progress-over' : ''; ?>" style="width: <?php echo min($percentage, 100); ?>%"></div>
-                </div>
-                
-                <div class="budget-status">
-                    <div class="remaining <?php echo $statusClass; ?>">
-                        <span><?php echo $statusClass == 'over' ? '⚠️' : ($statusClass == 'warning' ? '⚠️' : '✅'); ?></span>
-                        $<?php echo number_format(abs($remaining), 2); ?> <?php echo $remaining >= 0 ? 'remaining' : 'over budget'; ?>
-                    </div>
-                    <div class="usage"><?php echo round($percentage); ?>% used</div>
+                <div class="chart-container">
+                    <canvas id="trendChart"></canvas>
                 </div>
             </div>
-            <?php endforeach; ?>
-        </div>
-        <?php else: ?>
-        <div class="empty-state">
-            <div class="empty-state-icon">📊</div>
-            <h2>No budgets yet</h2>
-            <p>Create your first budget to start tracking your expenses!</p>
-        </div>
-        <?php endif; ?>
-    </div>
 
-    <!-- Create/Edit Budget Modal -->
-    <div id="createBudget" class="modal <?php echo $editBudget ? 'active' : ''; ?>">
-        <div class="modal-content">
-            <div class="modal-header"><?php echo $editBudget ? 'Edit Budget' : 'Create New Budget'; ?></div>
-            <form method="POST">
-                <input type="hidden" name="action" value="<?php echo $editBudget ? 'update_budget' : 'create_budget'; ?>">
-                <?php if ($editBudget): ?>
-                    <input type="hidden" name="id" value="<?php echo $editBudget['id']; ?>">
-                <?php endif; ?>
-                
-                <div class="form-group">
-                    <label>Budget Name</label>
-                    <input type="text" name="name" value="<?php echo $editBudget['name'] ?? ''; ?>" placeholder="e.g., Monthly Food Budget" required>
+            <!-- Category Breakdown -->
+            <div class="widget col-4">
+                <div class="widget-header">
+                    <div class="widget-title">Spending by Category</div>
                 </div>
-                
-                <div class="form-group">
-                    <label>Category</label>
-                    <select name="category" required>
-                        <option value="">Choose a category...</option>
-                        <option value="Food & Dining" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Food & Dining') ? 'selected' : ''; ?>>Food & Dining</option>
-                        <option value="Transportation" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Transportation') ? 'selected' : ''; ?>>Transportation</option>
-                        <option value="Shopping" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Shopping') ? 'selected' : ''; ?>>Shopping</option>
-                        <option value="Bills & Utilities" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Bills & Utilities') ? 'selected' : ''; ?>>Bills & Utilities</option>
-                        <option value="Entertainment" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Entertainment') ? 'selected' : ''; ?>>Entertainment</option>
-                        <option value="Healthcare" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Healthcare') ? 'selected' : ''; ?>>Healthcare</option>
-                        <option value="Education" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Education') ? 'selected' : ''; ?>>Education</option>
-                        <option value="Other" <?php echo (isset($editBudget['category']) && $editBudget['category'] == 'Other') ? 'selected' : ''; ?>>Other</option>
-                    </select>
+                <div class="chart-container">
+                    <canvas id="categoryChart"></canvas>
                 </div>
-                
-                <div class="form-group">
-                    <label>Budget Amount ($)</label>
-                    <input type="number" step="0.01" name="budget_amount" value="<?php echo $editBudget['budget_amount'] ?? ''; ?>" placeholder="500.00" required>
-                </div>
-                
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary"><?php echo $editBudget ? 'Update' : 'Create'; ?> Budget</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('createBudget')"><?php echo $editBudget ? 'Cancel' : 'Close'; ?></button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- View Expenses Modal -->
-    <?php if ($viewExpenses !== null && $currentBudget): ?>
-    <div id="viewExpenses" class="modal active">
-        <div class="modal-content large">
-            <div class="modal-header">
-                <?php echo htmlspecialchars($currentBudget['name']); ?> - Expenses
-                <button class="btn btn-primary" style="float: right; padding: 8px 16px; font-size: 14px;" onclick="openModal('addExpense')">+ Add Expense</button>
             </div>
-            
-            <?php if (count($viewExpenses) > 0): ?>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Description</th>
-                        <th>Amount</th>
-                        <th style="text-align: center;">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($viewExpenses as $expense): ?>
-                    <tr>
-                        <td><?php echo date('M d, Y', strtotime($expense['date'])); ?></td>
-                        <td><?php echo htmlspecialchars($expense['description']); ?></td>
-                        <td style="font-weight: 600;">$<?php echo number_format($expense['amount'], 2); ?></td>
-                        <td style="text-align: center;">
-                            <div style="display: flex; gap: 8px; justify-content: center;">
-                                <button class="btn-icon btn-edit" onclick="window.location.href='?view=<?php echo $_GET['view']; ?>&edit_expense=<?php echo $expense['id']; ?>'" title="Edit">✏️</button>
-                                <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this expense?');">
-                                    <input type="hidden" name="action" value="delete_expense">
-                                    <input type="hidden" name="id" value="<?php echo $expense['id']; ?>">
-                                    <button type="submit" class="btn-icon btn-delete" title="Delete">🗑️</button>
-                                </form>
+
+            <!-- Daily Spending Chart -->
+            <div class="widget col-6">
+                <div class="widget-header">
+                    <div class="widget-title">Daily Spending (This Month)</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Recent Expenses -->
+            <div class="widget col-6">
+                <div class="widget-header">
+                    <div class="widget-title">Recent Expenses</div>
+                </div>
+                
+                <?php if (count($recentExpenses) > 0): ?>
+                    <?php foreach ($recentExpenses as $expense): ?>
+                    <div class="payment-item">
+                        <div class="payment-info">
+                            <div class="payment-name"><?php echo htmlspecialchars($expense['description']); ?></div>
+                            <div class="payment-date">
+                                <?php echo htmlspecialchars($expense['budget_name']); ?> • 
+                                <?php echo date('M d, Y', strtotime($expense['date'])); ?>
                             </div>
-                        </td>
-                    </tr>
+                        </div>
+                        <div class="payment-amount">$<?php echo number_format($expense['amount'], 2); ?></div>
+                    </div>
                     <?php endforeach; ?>
-                </tbody>
-            </table>
-            <?php else: ?>
-            <div class="empty-state">
-                <p>No expenses added yet</p>
-            </div>
-            <?php endif; ?>
-            
-            <div class="form-actions" style="margin-top: 20px;">
-                <button type="button" class="btn btn-secondary" onclick="window.location.href='<?php echo $_SERVER['PHP_SELF']; ?>'">Close</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Add/Edit Expense Modal -->
-    <div id="addExpense" class="modal <?php echo $editExpense ? 'active' : ''; ?>">
-        <div class="modal-content">
-            <div class="modal-header"><?php echo $editExpense ? 'Edit Expense' : 'Add Expense'; ?></div>
-            <form method="POST">
-                <input type="hidden" name="action" value="<?php echo $editExpense ? 'update_expense' : 'add_expense'; ?>">
-                <input type="hidden" name="budget_id" value="<?php echo $_GET['view']; ?>">
-                <?php if ($editExpense): ?>
-                    <input type="hidden" name="id" value="<?php echo $editExpense['id']; ?>">
+                <?php else: ?>
+                    <div class="empty-state">
+                        <div class="empty-icon">📝</div>
+                        <h3>No expenses yet</h3>
+                    </div>
                 <?php endif; ?>
-                
-                <div class="form-group">
-                    <label>Amount ($)</label>
-                    <input type="number" step="0.01" name="amount" value="<?php echo $editExpense['amount'] ?? ''; ?>" placeholder="25.50" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Description</label>
-                    <textarea name="description" placeholder="What did you spend on?" required><?php echo $editExpense['description'] ?? ''; ?></textarea>
-                </div>
-                
-                <div class="form-group">
-                    <label>Date</label>
-                    <input type="date" name="date" value="<?php echo $editExpense['date'] ?? date('Y-m-d'); ?>" required>
-                </div>
-                
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary"><?php echo $editExpense ? 'Update' : 'Add'; ?> Expense</button>
-                    <button type="button" class="btn btn-secondary" onclick="window.location.href='?view=<?php echo $_GET['view']; ?>'"><?php echo $editExpense ? 'Cancel' : 'Close'; ?></button>
-                </div>
-            </form>
+            </div>
         </div>
-    </div>
-    <?php endif; ?>
+    </main>
 
     <script>
-        function openModal(id) {
-            document.getElementById(id).classList.add('active');
-        }
-        
-        function closeModal(id) {
-            document.getElementById(id).classList.remove('active');
-            if (id === 'createBudget' && window.location.search.includes('edit=')) {
-                window.location.href = '<?php echo $_SERVER['PHP_SELF']; ?>';
+        // Spending Trend Chart
+        const trendCtx = document.getElementById('trendChart').getContext('2d');
+        new Chart(trendCtx, {
+            type: 'line',
+            data: {
+                labels: <?php echo json_encode(array_map(function($item) {
+                    return date('M Y', strtotime($item['month'] . '-01'));
+                }, $monthlyTrend)); ?>,
+                datasets: [{
+                    label: 'Spending',
+                    data: <?php echo json_encode(array_map(function($item) {
+                        return $item['total'];
+                    }, $monthlyTrend)); ?>,
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value;
+                            }
+                        }
+                    }
+                }
             }
-        }
-        
-        window.onclick = function(event) {
-            if (event.target.classList.contains('modal')) {
-                event.target.classList.remove('active');
+        });
+
+        // Category Chart
+        const categoryCtx = document.getElementById('categoryChart').getContext('2d');
+        new Chart(categoryCtx, {
+            type: 'doughnut',
+            data: {
+                labels: <?php echo json_encode(array_map(function($item) {
+                    return $item['category'];
+                }, $categorySpending)); ?>,
+                datasets: [{
+                    data: <?php echo json_encode(array_map(function($item) {
+                        return $item['total'];
+                    }, $categorySpending)); ?>,
+                    backgroundColor: [
+                        '#e91e63',
+                        '#2196f3',
+                        '#9c27b0',
+                        '#ff9800',
+                        '#009688',
+                        '#f44336',
+                        '#4caf50',
+                        '#757575'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
             }
-        }
-        
-        // Close modal on ESC key
-        document.addEventListener('keydown', function(event) {
-            if (event.key === 'Escape') {
-                const modals = document.querySelectorAll('.modal.active');
-                modals.forEach(modal => modal.classList.remove('active'));
+        });
+
+        // Daily Spending Chart
+        const dailyCtx = document.getElementById('dailyChart').getContext('2d');
+        new Chart(dailyCtx, {
+            type: 'bar',
+            data: {
+                labels: <?php echo json_encode(array_map(function($item) {
+                    return date('d', strtotime($item['day']));
+                }, $dailySpending)); ?>,
+                datasets: [{
+                    label: 'Daily Spending',
+                    data: <?php echo json_encode(array_map(function($item) {
+                        return $item['total'];
+                    }, $dailySpending)); ?>,
+                    backgroundColor: '#764ba2'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value;
+                            }
+                        }
+                    }
+                }
             }
         });
     </script>
