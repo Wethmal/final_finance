@@ -409,9 +409,9 @@ $dailySpending = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
 
-            <form action="sync.php" method="POST">
+            <!-- <form action="sync.php" method="POST">
     <button type="submit">🔄 Sync to Oracle</button>
-</form>
+</form> -->
 
         </div>
 
@@ -615,4 +615,20 @@ $dailySpending = $stmt->fetchAll(PDO::FETCH_ASSOC);
         });
     </script>
 </body>
+<!-- <?php
+require_once "db/database.php";
+$db = new Database();
+$conn = $db->getConnection();
+
+$lastSync = $conn->query("SELECT last_sync FROM sync_status ORDER BY id DESC LIMIT 1")->fetchColumn();
+$now = new DateTime();
+$last = new DateTime($lastSync);
+
+$diff = $now->diff($last)->days;
+
+if ($diff >= 1) {
+    include "sync.php";  // auto run sync once per day
+}
+?> -->
+
 </html>

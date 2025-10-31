@@ -79,6 +79,15 @@ class Database {
                 FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE
             )
         ");
+
+        
+        $this->db->exec("
+           CREATE TABLE IF NOT EXISTS sync_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    last_sync DATETIME
+);
+
+        ");
     }
 
     public function getConnection() {

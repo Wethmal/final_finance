@@ -1,5 +1,5 @@
 <?php
-require_once "db/database.php";    // your SQLite connection
+require_once __DIR__ . '/../db/database.php';   // Go up one folder
 require_once "config/oracle.php";  // your Oracle connection
 
 // Connect to both DBs
@@ -28,4 +28,8 @@ foreach ($data as $row) {
 }
 
 echo "<h3>✅ Sync completed successfully!</h3>";
+$pdo->exec("DELETE FROM sync_status");
+$pdo->exec("INSERT INTO sync_status (last_sync) VALUES (datetime('now'))");
+
 ?>
+
