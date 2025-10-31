@@ -491,6 +491,32 @@ if (count($expenseForecast) > 0 && count($savingsForecast) > 0) {
             color: #1a202c;
         }
         
+        .top-bar-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
+        .btn-print {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        
+        .btn-print:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
         .period-selector {
             display: flex;
             gap: 8px;
@@ -794,9 +820,197 @@ if (count($expenseForecast) > 0 && count($savingsForecast) > 0) {
             .stats-grid { grid-template-columns: 1fr; }
             .forecast-grid { grid-template-columns: 1fr; }
         }
+        
+        /* Print Styles */
+        @media print {
+            body {
+                background: white;
+                display: block;
+            }
+            
+            .sidebar,
+            .btn-print,
+            .period-selector,
+            .nav-link,
+            .fab {
+                display: none !important;
+            }
+            
+            .main-content {
+                margin-left: 0;
+                padding: 0;
+                max-width: 100%;
+            }
+            
+            .page-title {
+                font-size: 24px;
+                margin-bottom: 20px;
+                color: #000;
+            }
+            
+            .report-section {
+                page-break-inside: avoid;
+                border: 1px solid #ddd;
+                padding: 20px;
+                margin-bottom: 20px;
+                background: white;
+            }
+            
+            .report-title {
+                font-size: 18px;
+                color: #000;
+                border-bottom: 2px solid #000;
+                padding-bottom: 10px;
+                margin-bottom: 15px;
+            }
+            
+            .insights-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+                page-break-inside: avoid;
+            }
+            
+            .insight-card {
+                border: 1px solid #ddd;
+                padding: 15px;
+                page-break-inside: avoid;
+            }
+            
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 10px;
+                page-break-inside: avoid;
+            }
+            
+            .stat-box {
+                border: 1px solid #ddd;
+                background: #f9f9f9;
+                padding: 12px;
+            }
+            
+            table {
+                page-break-inside: avoid;
+                border: 1px solid #ddd;
+            }
+            
+            th {
+                background: #f0f0f0 !important;
+                color: #000;
+                border: 1px solid #ddd;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            td {
+                border: 1px solid #ddd;
+                color: #000;
+            }
+            
+            .progress-bar-container,
+            .progress-bar-fill {
+                border: 1px solid #ddd;
+                background: white;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .progress-bar-fill {
+                background: #667eea !important;
+            }
+            
+            .status-badge {
+                border: 1px solid #000;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .chart-container {
+                page-break-inside: avoid;
+            }
+            
+            .category-bar {
+                page-break-inside: avoid;
+            }
+            
+            .category-progress {
+                border: 1px solid #ddd;
+            }
+            
+            .category-progress-fill {
+                background: #667eea !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .forecast-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 10px;
+                page-break-inside: avoid;
+            }
+            
+            .forecast-card {
+                background: #667eea !important;
+                color: white !important;
+                border: 2px solid #667eea;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .print-header {
+                display: block !important;
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 3px solid #667eea;
+            }
+            
+            .print-logo {
+                font-size: 32px;
+                font-weight: 700;
+                color: #667eea;
+                margin-bottom: 10px;
+            }
+            
+            .print-date {
+                font-size: 14px;
+                color: #666;
+            }
+            
+            .print-footer {
+                display: block !important;
+                text-align: center;
+                margin-top: 30px;
+                padding-top: 20px;
+                border-top: 2px solid #ddd;
+                font-size: 12px;
+                color: #666;
+            }
+            
+            /* Force page breaks */
+            .report-section:nth-child(3) {
+                page-break-before: always;
+            }
+            
+            .report-section:nth-child(5) {
+                page-break-before: always;
+            }
+        }
     </style>
 </head>
 <body>
+    <!-- Print Header (hidden on screen) -->
+    <div class="print-header" style="display: none;">
+        <div class="print-logo">💰 Statok Financial Analytics Report</div>
+        <div class="print-date">
+            Generated on <?php echo date('F d, Y'); ?> | 
+            Period: <?php echo date('M d, Y', strtotime($startDate)); ?> - <?php echo date('M d, Y', strtotime($endDate)); ?>
+        </div>
+        <div class="print-date">User: <?php echo htmlspecialchars($username); ?></div>
+    </div>
+    
     <aside class="sidebar">
         <div class="logo">
             <div class="logo-icon">💰</div>
@@ -829,7 +1043,7 @@ if (count($expenseForecast) > 0 && count($savingsForecast) > 0) {
                 </a>
             </li>
             <li class="nav-item">
-                <a href="#" class="nav-link">
+                <a href="setting.php" class="nav-link">
                     <span class="nav-icon">⚙️</span>
                     Settings
                 </a>
@@ -846,10 +1060,15 @@ if (count($expenseForecast) > 0 && count($savingsForecast) > 0) {
     <main class="main-content">
         <div class="top-bar">
             <div class="page-title">📈 Financial Analytics</div>
-            <div class="period-selector">
-                <button class="period-btn <?php echo $period == '3' ? 'active' : ''; ?>" onclick="window.location.href='?period=3'">3 Months</button>
-                <button class="period-btn <?php echo $period == '6' ? 'active' : ''; ?>" onclick="window.location.href='?period=6'">6 Months</button>
-                <button class="period-btn <?php echo $period == '12' ? 'active' : ''; ?>" onclick="window.location.href='?period=12'">12 Months</button>
+            <div class="top-bar-actions">
+                <button class="btn-print" onclick="window.print()">
+                    🖨️ Print Report
+                </button>
+                <div class="period-selector">
+                    <button class="period-btn <?php echo $period == '3' ? 'active' : ''; ?>" onclick="window.location.href='?period=3'">3 Months</button>
+                    <button class="period-btn <?php echo $period == '6' ? 'active' : ''; ?>" onclick="window.location.href='?period=6'">6 Months</button>
+                    <button class="period-btn <?php echo $period == '12' ? 'active' : ''; ?>" onclick="window.location.href='?period=12'">12 Months</button>
+                </div>
             </div>
         </div>
 
@@ -1329,6 +1548,13 @@ if (count($expenseForecast) > 0 && count($savingsForecast) > 0) {
 
     </main>
 
+    <!-- Print Footer (hidden on screen) -->
+    <div class="print-footer" style="display: none;">
+        <p>This is a confidential financial report generated by Statok</p>
+        <p>© <?php echo date('Y'); ?> Statok - Personal Finance Management System</p>
+        <p style="margin-top: 10px;">Page printed on <?php echo date('F d, Y \a\t h:i A'); ?></p>
+    </div>
+
     <script>
         // Animate progress bars on load
         window.addEventListener('load', function() {
@@ -1339,6 +1565,23 @@ if (count($expenseForecast) > 0 && count($savingsForecast) > 0) {
                 setTimeout(() => {
                     bar.style.width = width;
                 }, 100);
+            });
+        });
+        
+        // Print optimization
+        window.addEventListener('beforeprint', function() {
+            // Ensure all progress bars are visible before printing
+            const progressBars = document.querySelectorAll('.category-progress-fill, .progress-bar-fill');
+            progressBars.forEach(bar => {
+                bar.style.transition = 'none';
+            });
+        });
+        
+        window.addEventListener('afterprint', function() {
+            // Restore transitions after printing
+            const progressBars = document.querySelectorAll('.category-progress-fill, .progress-bar-fill');
+            progressBars.forEach(bar => {
+                bar.style.transition = '';
             });
         });
     </script>

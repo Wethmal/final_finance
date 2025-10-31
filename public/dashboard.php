@@ -382,7 +382,7 @@ $dailySpending = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </a>
             </li>
             <li class="nav-item">
-                <a href="#" class="nav-link">
+                <a href="setting.php" class="nav-link">
                     <span class="nav-icon">⚙️</span>
                     Settings
                 </a>
