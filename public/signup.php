@@ -3,6 +3,12 @@
 session_start();
 require_once __DIR__ . '/../db/database.php';
 
+//oracle connection not needed here
+require_once __DIR__ . '/../config/oracle.php';
+$oracle = new OracleDB();
+$oracle_conn = $oracle->getConnection();
+
+
 $error = '';
 $success = '';
 
@@ -36,8 +42,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bindParam(':password', $hashed_password);
             
             if ($stmt->execute()) {
-                $success = "Registration successful! You can now login.";
-            }
+    // Backup to Oracle
+    try {
+        require_once __DIR__ . '/../config/oracle.php';
+        $oracle = new OracleDB();
+        $oracle_conn = $oracle->getConnection();
+
+       $oracle_sql = "INSERT INTO users (name, email, password, created_at) 
+               VALUES (:username, :email, :password, SYSDATE)";
+
+        $oracle_stmt = oci_parse($oracle_conn, $oracle_sql);
+        oci_bind_by_name($oracle_stmt, ':username', $username);
+oci_bind_by_name($oracle_stmt, ':email', $email);
+oci_bind_by_name($oracle_stmt, ':password', $hashed_password);
+
+        oci_execute($oracle_stmt);
+        oci_free_statement($oracle_stmt);
+        oci_close($oracle_conn);
+    } catch (Exception $e) {
+        // Backup failed, just log it
+        error_log("Oracle backup failed: " . $e->getMessage());
+    }
+
+    $success = "Registration successful! You can now login.";
+}
+
         } catch(PDOException $e) {
             if (strpos($e->getMessage(), 'UNIQUE constraint failed') !== false) {
                 $error = "Username or email already exists";
@@ -749,15 +778,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         
         // Form validation
-        document.getElementById('signupForm').addEventListener('submit', function(e) {
-            const password = document.getElementById('password').value;
-            const confirmPassword = document.getElementById('confirm_password').value;
-            
-            if (password !== confirmPassword) {
-                e.preventDefault();
-                alert('Passwords do not match!');
-            }
-        });
+document.getElementById('signupForm').addEventListener('submit', function(e) {
+    const password = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
+
+    if (password !== confirmPassword) {
+        e.preventDefault();
+        alert('Passwords do not match!');
+    }
+});
+
     </script>
 </body>
 </html>

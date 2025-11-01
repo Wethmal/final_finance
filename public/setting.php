@@ -640,7 +640,7 @@ $accountAge = $accountCreated->diff($now)->days;
                 </a>
             </li>
             <li class="nav-item">
-                <a href="analytics.php" class="nav-link">
+                <a href="nalytics.php" class="nav-link">
                     <span class="nav-icon">📈</span>
                     Analytics
                 </a>

@@ -3,9 +3,9 @@ class OracleDB {
     private $conn;
 
     public function __construct() {
-        $username = "system"; // or ADMIN (for cloud)
-        $password = "admin123"; // your password
-        $connection_string = "localhost/XEPDB1"; // or your cloud TNS name
+        $username = "system";      // your Oracle username
+        $password = "admin123";    // your Oracle password
+        $connection_string = "localhost/XEPDB1"; // default for Oracle XE
 
         try {
             $this->conn = oci_connect($username, $password, $connection_string);
@@ -14,12 +14,19 @@ class OracleDB {
                 throw new Exception($e['message']);
             }
         } catch (Exception $e) {
-            die("Oracle Connection failed: " . $e->getMessage());
+            error_log("Oracle connection failed: " . $e->getMessage());
+            $this->conn = null;
         }
     }
 
     public function getConnection() {
         return $this->conn;
+    }
+
+    public function __destruct() {
+        if ($this->conn) {
+            oci_close($this->conn);
+        }
     }
 }
 ?>
